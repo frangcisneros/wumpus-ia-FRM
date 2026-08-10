@@ -115,11 +115,10 @@ def simular():
         print("\n" + "=" * 60)
         print("  SIMULACIÓN TERMINADA - El agente murió.")
         print("=" * 60)
-
-    print("\n  Estado REAL del tablero (para verificación del observador):")
-    print(f"  Wumpus: {tablero['wumpus']}")
-    print(f"  Pozos:  {tablero['pozos']}")
-    print(f"  Oro:    {tablero['oro']}")
+        print("\n  Estado REAL del tablero (para verificación del observador):")
+        print(f"  Wumpus: {tablero['wumpus']}")
+        print(f"  Pozos:  {tablero['pozos']}")
+        print(f"  Oro:    {tablero['oro']}")
 
 
 if __name__ == '__main__':
