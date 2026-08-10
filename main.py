@@ -3,10 +3,10 @@ from agente import Agente
 from base_conocimiento import BaseConocimiento
 from motor_inferencia import inferir
 from visualizacion import mostrar_tablero
+from collections import deque
 
 
 def _direccion_hacia(origen, destino):
-    """Devuelve la dirección ('este','norte','oeste','sur') para ir de origen a destino."""
     dx = destino[0] - origen[0]
     dy = destino[1] - origen[1]
     for nombre, (vx, vy) in DIRECCIONES.items():
@@ -15,8 +15,7 @@ def _direccion_hacia(origen, destino):
     return None
 
 
-def _orientar_y_disparar(agente, base, candidatas):
-    """Intenta orientar al agente hacia una candidata y disparar."""
+def _orientar_y_disparar(agente, candidatas):
     for candidata in candidatas:
         dir_objetivo = _direccion_hacia((agente.x, agente.y), candidata)
         if dir_objetivo is None:
@@ -27,37 +26,30 @@ def _orientar_y_disparar(agente, base, candidatas):
     return None
 
 
-def _backtrack(agente, base, ultima_pos=None):
-    """Busca una casilla visitada adyacente a la que se puede volver (excepto la última posición)."""
-    vecinas = adyacentes(agente.x, agente.y)
-    for v in vecinas:
-        if v in base.visitadas and v in base.seguras and v != ultima_pos:
-            return v
+def _camino_seguro(origen, destino, base):
+    if origen == destino:
+        return []
+    visitados = {origen}
+    cola = deque([(origen, [])])
+    while cola:
+        actual, camino = cola.popleft()
+        for vecina in adyacentes(*actual):
+            if vecina == destino:
+                return camino + [vecina]
+            if vecina not in visitados and vecina in base.visitadas:
+                visitados.add(vecina)
+                cola.append((vecina, camino + [vecina]))
     return None
 
 
-def _buscar_visitada_con_opciones(agente, base):
-    """Busca una casilla visitada que tenga vecinas sin visitar y seguras."""
-    for visitada in base.visitadas:
-        vecinas = adyacentes(visitada[0], visitada[1])
-        for v in vecinas:
-            if v in base.seguras and v not in base.visitadas and v not in base.peligrosas:
-                return visitada
-    return None
-
-
-def elegir_accion(agente, base, ultima_pos=None):
-    """Política de decisión: elige la próxima acción basándose en la base de conocimiento."""
-    if agente.tiene_oro and (agente.x, agente.y) == (1, 1):
-        return ('salir', None)
+def elegir_accion(agente, base):
+    pos = (agente.x, agente.y)
 
     if agente.tiene_oro:
-        destino = (1, 1)
-        if destino in base.seguras:
-            return ('mover', destino)
-        backtrack = _backtrack(agente, base, ultima_pos)
-        if backtrack:
-            return ('mover', backtrack)
+        if pos == (1, 1):
+            return ('salir', None)
+        if (1, 1) in base.seguras:
+            return ('mover', (1, 1))
         return ('detener', None)
 
     candidatas = base.casillas_por_explorar()
@@ -66,59 +58,73 @@ def elegir_accion(agente, base, ultima_pos=None):
         return ('mover', destino)
 
     if agente.tiene_flecha and not base.wumpus_muerto:
-        percepcion = base.percepciones.get((agente.x, agente.y), {})
+        percepcion = base.percepciones.get(pos, {})
         if percepcion.get('stench') and not base.wumpus_confirmado:
             vecinas = adyacentes(agente.x, agente.y)
-            candidatas = [v for v in vecinas if v not in base.seguras and v not in base.no_wumpus]
-            if len(candidatas) == 2:
-                return _orientar_y_disparar(agente, base, candidatas)
+            candidatas_wumpus = [
+                v for v in vecinas
+                if v not in base.seguras and v not in base.no_wumpus
+            ]
+            if len(candidatas_wumpus) == 2:
+                return _orientar_y_disparar(agente, candidatas_wumpus)
 
-    visitada_opcion = _buscar_visitada_con_opciones(agente, base)
-    if visitada_opcion:
-        return ('mover', visitada_opcion)
+    def _score_riesgo(casilla):
+        score = 0
+        for c in base.visitadas:
+            perc = base.percepciones.get(c, {})
+            vecinas_c = adyacentes(*c)
+            if perc.get('breeze') and casilla in vecinas_c:
+                score += 1
+            if perc.get('stench') and casilla in vecinas_c:
+                score += 1
+        return score
 
-    backtrack = _backtrack(agente, base, ultima_pos)
-    if backtrack:
-        return ('mover', backtrack)
-
-    if agente.tiene_flecha and not base.wumpus_muerto:
-        percepcion = base.percepciones.get((agente.x, agente.y), {})
-        if percepcion.get('stench') and not base.wumpus_confirmado:
-            vecinas = adyacentes(agente.x, agente.y)
-            candidatas = [v for v in vecinas if v not in base.seguras and v not in base.no_wumpus]
-            if len(candidatas) == 2:
-                return _orientar_y_disparar(agente, base, candidatas)
+    for visitada in base.visitadas:
+        vecinas_visitada = adyacentes(*visitada)
+        opciones = [v for v in vecinas_visitada
+                    if v not in base.visitadas and v not in base.peligrosas and v not in base.pozos_confirmados]
+        if opciones:
+            mejor = min(opciones, key=_score_riesgo)
+            if visitada == pos:
+                return ('mover', mejor)
+            camino = _camino_seguro(pos, visitada, base)
+            if camino:
+                return ('mover', camino[0])
 
     vecinas = adyacentes(agente.x, agente.y)
-    candidatas_arriesgadas = [v for v in vecinas if v not in base.visitadas
-                               and v not in base.peligrosas]
-    if candidatas_arriesgadas:
-        destino = candidatas_arriesgadas[0]
+    arriesgadas = [v for v in vecinas if v not in base.visitadas]
+    if arriesgadas:
+        destino = min(arriesgadas, key=_score_riesgo)
         return ('mover', destino)
 
     return ('detener', None)
 
 
 def simular():
-    """Ejecuta la simulación completa: ciclo percibir → inferir → decidir → actuar."""
     tablero = generar_tablero()
     agente = Agente()
     base = BaseConocimiento()
     paso = 1
-    sin_avance = 0
-    MAX_SIN_AVANCE = 30
     hay_grito = False
     hubo_golpe = False
-    ultima_pos = None
+    historial = []
 
     print("=" * 60)
-    print("  SIMULACIÓN - MUNDO DEL WUMPUS (Sistema Experto)")
+    print("  SIMULACION - MUNDO DEL WUMPUS (Sistema Experto)")
     print("=" * 60)
     print("-" * 60)
 
-    while agente.vivo and sin_avance < MAX_SIN_AVANCE:
-        seguras_antes = len(base.seguras)
-        visitadas_antes = len(base.visitadas)
+    while agente.vivo:
+        pos_actual = (agente.x, agente.y)
+        historial.append(pos_actual)
+        if len(historial) > 12:
+            historial.pop(0)
+
+        if len(historial) >= 4:
+            ultimas4 = historial[-4:]
+            if ultimas4[0] == ultimas4[2] and ultimas4[1] == ultimas4[3]:
+                print(f"\n  -> Agente atrapado en ciclo. Fin de la simulacion.")
+                break
 
         percepcion = percibir(tablero, agente.x, agente.y, hay_grito, hubo_golpe)
         base.registrar_percepcion(agente.x, agente.y, percepcion)
@@ -131,82 +137,72 @@ def simular():
 
         mostrar_tablero(agente, base)
 
-        seguras_despues = len(base.seguras)
-        visitadas_despues = len(base.visitadas)
-        hubo_avance = (seguras_despues > seguras_antes or visitadas_despues > visitadas_antes)
-
         if percepcion['glitter']:
             agente.agarrar_oro()
-            print("  -> ¡Encontró el oro! Lo agarra.")
+            print("  -> Encontro el oro! Lo agarra.")
             print("  -> Regresando a (1,1) para salir...")
             while (agente.x, agente.y) != (1, 1):
-                destino = (1, 1)
-                if destino in base.seguras:
-                    print(f"  -> Mueve a {destino}")
-                    agente.mover_a(*destino)
+                if (1, 1) in base.seguras:
+                    print(f"  -> Mueve a (1, 1)")
+                    agente.mover_a(1, 1)
                 else:
-                    backtrack = _backtrack(agente, base, ultima_pos)
-                    if backtrack:
-                        print(f"  -> Retrocede a {backtrack}")
-                        ultima_pos = (agente.x, agente.y)
-                        agente.mover_a(*backtrack)
-                    else:
-                        print("  -> No hay camino seguro de regreso. Fin.")
-                        break
+                    print("  -> No hay camino seguro de regreso. Fin.")
+                    break
             if (agente.x, agente.y) == (1, 1):
                 print("\n" + "=" * 60)
-                print("  ¡SIMULACIÓN TERMINADA CON ÉXITO! El agente salió con el oro.")
+                print("  SIMULACION TERMINADA CON EXITO! El agente salio con el oro.")
                 print("=" * 60)
-                print("\n  Estado REAL del tablero (para verificación del observador):")
+                print("\n  Estado REAL del tablero (para verificacion del observador):")
                 print(f"  Wumpus: {tablero['wumpus']}")
                 print(f"  Pozos:  {tablero['pozos']}")
                 print(f"  Oro:    {tablero['oro']}")
             break
 
-        accion, destino = elegir_accion(agente, base, ultima_pos)
+        accion, destino = elegir_accion(agente, base)
 
         if accion == 'mover':
-            print(f"  -> Acción: mover a {destino}")
-            ultima_pos = (agente.x, agente.y)
+            print(f"  -> Accion: mover a {destino}")
             agente.mover_a(*destino)
+            if destino in tablero['pozos']:
+                agente.morir()
+                print(f"  -> El agente cayo en un pozo en {destino}!")
+            elif destino == tablero['wumpus'] and tablero.get('wumpus_vivo', True):
+                agente.morir()
+                print(f"  -> El agente fue devorado por el Wumpus en {destino}!")
 
         elif accion == 'disparar':
-            print("  -> Acción: DISPARAR FLECHA (hedor detectado)")
+            print("  -> Accion: DISPARAR FLECHA (hedor detectado)")
             grito = disparar_flecha(tablero, agente.x, agente.y, agente.orientacion)
             agente.usar_flecha()
             if grito:
-                print("  -> ¡Grito! El Wumpus murió.")
+                print("  -> Grito! El Wumpus murio.")
                 hay_grito = True
                 base.marcar_wumpus_muerto()
             else:
-                print("  -> La flecha no dio en el Wumpus. Se perdió.")
+                print("  -> La flecha no dio en el Wumpus. Se perdio.")
 
         elif accion == 'salir':
             agente.salir_de_cueva()
             print("\n" + "=" * 60)
-            print("  ¡SIMULACIÓN TERMINADA CON ÉXITO! El agente salió con el oro.")
+            print("  SIMULACION TERMINADA CON EXITO! El agente salio con el oro.")
             print("=" * 60)
-            print("\n  Estado REAL del tablero (para verificación del observador):")
+            print("\n  Estado REAL del tablero (para verificacion del observador):")
             print(f"  Wumpus: {tablero['wumpus']}")
             print(f"  Pozos:  {tablero['pozos']}")
             print(f"  Oro:    {tablero['oro']}")
             break
 
         else:
-            print("  -> No quedan casillas seguras por explorar. Fin de la simulación.")
+            print("  -> No quedan casillas seguras por explorar. Fin de la simulacion.")
             break
 
         paso += 1
-        if hubo_avance:
-            sin_avance = 0
-        else:
-            sin_avance += 1
 
     if not agente.vivo:
         print("\n" + "=" * 60)
-        print("  SIMULACIÓN TERMINADA - El agente murió.")
+        print("  SIMULACION TERMINADA - El agente murio.")
         print("=" * 60)
-        print("\n  Estado REAL del tablero (para verificación del observador):")
+        print("\n  Estado REAL del tablero (para verificacion del observador):")
         print(f"  Wumpus: {tablero['wumpus']}")
         print(f"  Pozos:  {tablero['pozos']}")
         print(f"  Oro:    {tablero['oro']}")

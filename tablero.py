@@ -14,16 +14,17 @@ DIRECCIONES = {
 def generar_tablero(cant_pozos=2):
     """
     Genera un tablero aleatorio de 4x4 respetando las reglas del juego:
-    - Casilla (1, 1) siempre libre de Wumpus y Pozos.
+    - Casillas (1,1), (1,2) y (2,1) siempre libres de Wumpus, Pozos y Oro.
     - 1 Wumpus en posición aleatoria.
     - 'cant_pozos' Pozos en posiciones aleatorias (por defecto 2, entre 1 y 3).
     - 1 pieza de Oro en posición aleatoria.
     """
+    seguras = {(1, 1), (1, 2), (2, 1)}
     casillas_disponibles = [
         (x, y)
         for x in range(1, TAMANIO + 1)
         for y in range(1, TAMANIO + 1)
-        if (x, y) != (1, 1)
+        if (x, y) not in seguras
     ]
     random.shuffle(casillas_disponibles)
 
@@ -31,7 +32,6 @@ def generar_tablero(cant_pozos=2):
 
     pozos = [casillas_disponibles.pop() for _ in range(cant_pozos)]
 
-    # El oro puede ser cualquier casilla disponible (que no sea 1,1)
     oro = casillas_disponibles.pop()
 
     return {
